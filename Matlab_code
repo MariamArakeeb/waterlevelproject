@@ -1,0 +1,145 @@
+%================ Start ==========================
+clear s;
+clearvars;
+
+pump_data =[] ;
+prevPump = 0;
+
+time = [];
+tank1_data = [];
+tank2_data = [];
+
+t = 0;
+
+figure;
+
+% ================== Serial Setup ==================
+s = serialport("COM6", 9600);
+configureTerminator(s, "LF");
+flush(s);
+pause(2);
+
+%================= Loop ==========================
+
+configureCallback(s, "terminator", @readSerialData); 
+
+function readSerialData(src, ~)
+  persistent pump pump_data prevPump time tank1_data tank2_data t  
+
+  if isempty(t) 
+      pump=0;
+      pump_data = [];  
+      prevPump = 0;  
+      time = [];  
+      tank1_data = [];  
+      tank2_data = [];  
+      t = 0; 
+  end  
+   
+  t = t + 1;
+ 
+%================ Connecting Data ================== 
+   
+  if src.NumBytesAvailable > 0  
+      try  
+         data = strtrim(readline(src));  
+      catch  
+         return; 
+  end  
+  else  
+      return; 
+  end  
+
+  if isempty(data)  
+      return; 
+  end  
+
+  values = sscanf(data, "%d,%d,%d");  
+
+  if numel(values) ~= 3  
+      return; 
+  end  
+
+  tank1 = values(1);  
+  tank2 = values(2);
+  pump = values(3); 
+
+  % ============تخزين===============================
+   time(end+1) = t;
+   tank1_data(end+1) = tank1;
+   tank2_data(end+1) = tank2;
+   pump_data(end+1) = pump;
+    %=================== 1) الجراف ==================
+
+    subplot(2,2,[1 2])
+    
+    plot(time, tank1_data, '-b', 'LineWidth', 2);
+    hold on;
+    plot(time, tank2_data, '-r', 'LineWidth', 2);
+    
+    xlabel('Time (s)');
+    ylabel('Level (%)');
+    legend('Tank1','Tank2');
+    ylim([0 100]);
+    grid on;
+    hold off;
+
+    %% ================== 2) التانكات ==================
+
+    subplot(2,2,3)
+    
+    cla;
+    rectangle('Position',[0 0 2 100],'EdgeColor','k','LineWidth',2);
+    hold on;
+
+    if tank1 < 33
+       color = [0 1 0];
+    elseif tank1 < 66
+       color = [1 1 0];
+    else
+       color = [1 0 0];
+    end
+
+    rectangle('Position',[0 0 2 tank1],'FaceColor',color);
+    
+
+    title(['Tank 1: ' num2str(tank1) '%']);
+    ylim([0 100]);
+    xlim([0 2]);
+    set(gca,'xtick',[])
+
+    %% ------------------
+    subplot(2,2,4)
+
+    cla;
+    rectangle('Position',[0 0 2 100],'EdgeColor','k','LineWidth',2);
+    hold on ;
+
+    if tank2 < 33
+        color = [0 1 0];
+    elseif tank2 < 66
+        color = [1 1 0];
+    else
+        color = [1 0 0];
+    end
+
+    rectangle('Position',[0 0 2 tank2],'FaceColor',color);
+
+    title(['Tank 2: ' num2str(tank2) '%']);
+    ylim([0 100]);
+    xlim([0 2]);
+    set(gca,'xtick',[])
+
+%=================pump - arrow state============
+
+   if pump == 1
+    sgtitle('PUMP: ON (Flowing...)', 'Color', 'g');  
+   else
+      sgtitle('Pump: OFF', 'Color', 'r');
+   end
+   
+   prevPump = pump;
+   drawnow limitrate; 
+   
+
+end
