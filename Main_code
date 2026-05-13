@@ -1,0 +1,175 @@
+#include <LiquidCrystal.h> 
+
+// Initialize LCD with pin connections (RS, EN, D4, D5, D6, D7)
+LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
+
+// ====================== CONFIGURATION CONSTANTS ======================
+const int empty_tank = 19;      // Distance in cm when tank is empty
+const int SENSOR_OFFSET = 10;    // Minimum reliable sensor distance (cm)
+const int START_LEVEL = 90;     // Start pump when Tank1 level >= this %
+const int STOP_LEVEL = 50;      // Stop pump when Tank1 level <= this %
+const int TANK2_MAX = 100;      // Maximum level for Tank2 (%)
+const int MAX_DELTA = 12;       // Maximum allowed level change per reading (to filter noise)
+
+// Filtering and efficiency parameters
+float efficiency = 0.8;         // Pump efficiency (80%)
+float alpha = 0.7;              // Smoothing factor for distance filtering (EMA)
+
+// ====================== PIN DEFINITIONS ======================
+const int trigPin = 2;          // Ultrasonic sensor Trigger pin
+const int echoPin = 3;         // Ultrasonic sensor Echo pin
+const int relayPump = 13;        // Relay control pin for water pump
+const int ledGreen = 4;        // Green LED  - Low level
+const int ledYellow = 5;        // Yellow LED - Medium level
+const int ledRed = 6;           // Red LED    - High level
+
+// ====================== GLOBAL VARIABLES ======================
+float distance1 = (float)empty_tank;   // Current filtered distance
+int level1 = 0;                        // Current Tank1 level percentage
+int previous_level1 = 0;               // Previous Tank1 level (for delta calculation)
+float tank2_level = 0;                 // Virtual Tank2 level
+bool isPumping = false;                // Pump state
+bool showTank2 = false;                // Flag to show Tank2 info on LCD
+
+void setup() {
+  Serial.begin(9600); 
+  
+  // Configure pins
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(relayPump, OUTPUT);
+  pinMode(ledGreen, OUTPUT);
+  pinMode(ledYellow, OUTPUT);
+  pinMode(ledRed, OUTPUT);
+
+  digitalWrite(relayPump, LOW);   // Ensure pump is off at start
+  
+  // Initialize LCD
+  lcd.begin(16, 2);
+  lcd.clear(); 
+  
+  // Take initial reading
+  float initDist = getFilteredDistance();
+  distance1 = initDist;
+  previous_level1 = calculateLevel(distance1);
+}
+
+void loop() {
+  // Read and filter sensor distance
+  float current_reading = getFilteredDistance();
+  distance1 = (alpha * distance1) + ((1.0 - alpha) * current_reading);  // Exponential Moving Average
+
+  // Constrain distance to valid range
+  float constrained_dist = constrain(distance1, (float)SENSOR_OFFSET, (float)empty_tank);
+
+  // Calculate water level percentage
+  level1 = calculateLevel(constrained_dist);
+
+  // ==================== PUMP CONTROL LOGIC ====================
+  // Start pumping conditions
+  if (level1 >= START_LEVEL && !isPumping && tank2_level < TANK2_MAX) {
+    isPumping = true;
+    showTank2 = true; 
+  }
+  
+  // Stop pumping conditions
+  if ((level1 <= STOP_LEVEL || tank2_level >= TANK2_MAX) && isPumping) {
+    isPumping = false;
+  }
+
+  // Calculate Tank2 level based on water transferred from Tank1
+  if (isPumping && level1 < previous_level1) {
+    int delta = previous_level1 - level1;
+    if (delta > 0 && delta <= MAX_DELTA) { 
+      tank2_level += (delta * efficiency);
+    }
+  }
+  
+  tank2_level = constrain(tank2_level, 0, TANK2_MAX); 
+
+  // Control the pump relay
+  digitalWrite(relayPump, isPumping ? HIGH : LOW);
+
+  // Send data to Serial Monitor (for debugging)
+  Serial.print(level1);
+  Serial.print(",");
+  Serial.print((int)tank2_level);
+  Serial.print(",");
+  Serial.println(isPumping); 
+
+  // ====================== LCD DISPLAY ======================
+  lcd.setCursor(0, 0);
+  lcd.print("J1:"); lcd.print(level1); lcd.print("% "); 
+  lcd.print(distance1, 1); lcd.print("cm  "); 
+  
+  lcd.setCursor(0, 1);
+  if (showTank2) {
+    if (tank2_level >= TANK2_MAX) {
+      lcd.print("J2: FULL 100%   "); 
+    } else {
+      lcd.print("J2:"); lcd.print((int)tank2_level); lcd.print("% "); 
+      lcd.print(isPumping ? "Pumping " : "Stopped ");
+    }
+  } else {
+    lcd.print("Tank2: Waiting  ");
+  }
+
+  // Update LED indicators based on Tank1 level
+  updateLEDs(level1);
+
+  previous_level1 = level1; 
+  delay(50); 
+}
+
+// ====================== HELPER FUNCTIONS ======================
+
+// Get averaged and filtered distance from ultrasonic sensor
+float getFilteredDistance() {
+  long sum = 0;
+  int validReadings = 0;
+  
+  for(int i = 0; i < 3; i++) {
+    digitalWrite(trigPin, LOW); 
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH); 
+    delayMicroseconds(10); 
+    digitalWrite(trigPin, LOW);
+    
+    long d = pulseIn(echoPin, HIGH, 30000);  // Timeout 30ms
+    
+    if (d > 0 && d < 12000) { 
+      sum += d;
+      validReadings++;
+    }
+    delay(5);
+  }
+  
+  if (validReadings == 0) return distance1;   // Return last value if no valid reading
+  
+  return (sum / validReadings) * 0.0343 / 2.0;  // Convert to cm
+}
+
+// Calculate water level percentage from distance
+int calculateLevel(float dist) {
+  float f = (empty_tank - dist) * 100.0 / (empty_tank - SENSOR_OFFSET);
+  return constrain((int)f, 0, 100);
+}
+
+// Control LEDs according to Tank1 water level
+void updateLEDs(int val) {
+  if (val <= 33) {
+    digitalWrite(ledGreen, HIGH); 
+    digitalWrite(ledYellow, LOW); 
+    digitalWrite(ledRed, LOW);
+  } 
+  else if (val <= 66) {
+    digitalWrite(ledGreen, LOW); 
+    digitalWrite(ledYellow, HIGH); 
+    digitalWrite(ledRed, LOW);
+  } 
+  else {
+    digitalWrite(ledGreen, LOW); 
+    digitalWrite(ledYellow, LOW); 
+    digitalWrite(ledRed, HIGH);
+  }
+}
